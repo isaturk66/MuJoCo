@@ -81,10 +81,11 @@ class PIDController:
 class dummyPlanner:
   """Generate Path from 1 point directly to another"""
 
-  def __init__(self, target, vel_limit = 2) -> None:
+  def __init__(self, target, vel_limit = 2, waypoint_tolerance = 0.3) -> None:
     # TODO: MPC
     self.target = target  
     self.vel_limit = vel_limit
+    self.waypoint_tolerance = waypoint_tolerance
     # setpoint target location, controller output: desired velocity.
     self.pid_x = PID(2, 0.15, 1.5, setpoint = self.target[0],
                 output_limits = (-vel_limit, vel_limit),)
@@ -150,6 +151,11 @@ class dummyPlanner:
     # setpoint target location, controller output: desired velocity.
     self.pid_x.setpoint = self.target[0]
     self.pid_y.setpoint = self.target[1]
+  
+  def is_waypoint_reached(self, current_pos):
+    """Check if the drone has reached the current waypoint within tolerance"""
+    distance = np.linalg.norm(self.target - current_pos)
+    return distance < self.waypoint_tolerance
 
 class dummySensor:
   """Dummy sensor data. So the control code remains intact."""
@@ -169,12 +175,58 @@ class dummySensor:
 
 class drone:
   """Simple drone classe."""
-  def __init__(self, target=np.array((0,0,0))):
+  def __init__(self, waypoints=None):
     self.m = mujoco.MjModel.from_xml_path('mujoco_menagerie-main/skydio_x2/scene.xml')
     self.d = mujoco.MjData(self.m)
 
-    self.planner = dummyPlanner(target=target)
+    # Urban parcours waypoint system
+    if waypoints is None:
+      self.waypoints = [
+        np.array([0, 0, 1]),         # Start
+        np.array([1, 0.8, 1.2]),     # Navigate through center
+        np.array([1.5, 2.5, 1.5]),   # Around building cluster 1
+        np.array([0, 3, 1.3]),       # North edge
+        np.array([-1.5, 2.5, 1.8]),  # Around building cluster 2
+        np.array([-3, 1, 1.2]),      # West side
+        np.array([-2.5, -0.5, 0.8]), # Navigate low
+        np.array([-1.5, -1.2, 1.5]), # Around building cluster 3
+        np.array([0.5, -2.5, 1.0]),  # South edge
+        np.array([2.2, -1.2, 1.3]),  # Around building cluster 4
+        np.array([3.2, 0, 1.6]),     # East side
+        np.array([2.5, 0.8, 1.0]),   # Return path
+      ]
+    else:
+      self.waypoints = waypoints
+    
+    self.current_waypoint_index = 0
+    self.waypoints_completed = 0
+    self.lap_count = 0
+
+    self.planner = dummyPlanner(target=self.waypoints[0], waypoint_tolerance=0.3)
     self.sensor = dummySensor(self.d)
+    
+    # LIDAR sensor configuration
+    self.lidar_sensors = [
+      # Horizontal ring
+      'lidar_0', 'lidar_45', 'lidar_90', 'lidar_135', 'lidar_180', 'lidar_225', 'lidar_270', 'lidar_315',
+      # Upper ring
+      'lidar_up_0', 'lidar_up_45', 'lidar_up_90', 'lidar_up_135', 'lidar_up_180', 'lidar_up_225', 'lidar_up_270', 'lidar_up_315',
+      # Lower ring
+      'lidar_down_0', 'lidar_down_45', 'lidar_down_90', 'lidar_down_135', 'lidar_down_180', 'lidar_down_225', 'lidar_down_270', 'lidar_down_315',
+      # Zenith and nadir
+      'lidar_zenith', 'lidar_nadir'
+    ]
+    
+    # Get sensor IDs and their data addresses
+    self.lidar_sensor_ids = []
+    self.lidar_sensor_adr = []
+    self.lidar_site_ids = []
+    
+    for name in self.lidar_sensors:
+      sensor_id = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_SENSOR, name)
+      self.lidar_sensor_ids.append(sensor_id)
+      self.lidar_sensor_adr.append(self.m.sensor_adr[sensor_id])
+      self.lidar_site_ids.append(mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_SITE, name))
 
     # instantiate controllers
 
@@ -226,6 +278,60 @@ class drone:
     out = self.compute_motor_control(cmd_thrust, cmd_roll, cmd_pitch, cmd_yaw)
     self.d.ctrl[:4] = out
 
+  def get_lidar_data(self):
+    """Read LIDAR sensor data and return distances and hit points"""
+    lidar_data = []
+    
+    for i, sensor_adr in enumerate(self.lidar_sensor_adr):
+      # Get the distance measurement from the correct address in sensordata
+      distance = self.d.sensordata[sensor_adr]
+      
+      # Get site position and orientation in world frame
+      site_id = self.lidar_site_ids[i]
+      site_pos = self.d.site_xpos[site_id].copy()
+      site_mat = self.d.site_xmat[site_id].reshape(3, 3)
+      
+      # Ray direction is the site's z-axis in world frame
+      ray_direction = site_mat[:, 2]
+      
+      # Calculate hit point
+      if distance >= 0 and distance < 5:  # 5m is our cutoff
+        hit_point = site_pos + ray_direction * distance
+      else:
+        hit_point = site_pos + ray_direction * 5  # Max range
+        distance = -1  # No hit
+      
+      lidar_data.append({
+        'sensor_name': self.lidar_sensors[i],
+        'distance': distance,
+        'site_pos': site_pos,
+        'ray_direction': ray_direction,
+        'hit_point': hit_point,
+        'has_hit': distance >= 0 and distance < 5
+      })
+    
+    return lidar_data
+  
+  def check_and_update_waypoint(self):
+    """Check if current waypoint is reached and switch to next one"""
+    location = self.sensor.get_position()[:3]
+    
+    if self.planner.is_waypoint_reached(location):
+      # Move to next waypoint
+      self.current_waypoint_index += 1
+      self.waypoints_completed += 1
+      
+      # Loop back to start
+      if self.current_waypoint_index >= len(self.waypoints):
+        self.current_waypoint_index = 0
+        self.lap_count += 1
+        print(f"🏁 Lap {self.lap_count} completed! Starting new lap...")
+      
+      # Update to new waypoint
+      next_waypoint = self.waypoints[self.current_waypoint_index]
+      self.planner.update_target(next_waypoint)
+      print(f"✓ Waypoint {self.waypoints_completed} reached! Heading to waypoint {self.current_waypoint_index}: {next_waypoint}")
+
   #  as the drone is underactuated we set
   def compute_motor_control(self, thrust, roll, pitch, yaw):
     motor_control = [
@@ -237,26 +343,24 @@ class drone:
     return motor_control
 
 # -------------------------- Initialization ----------------------------------
-my_drone = drone(target=np.array((0,0,1)))
+my_drone = drone()
+
+print("🚁 Urban Drone Navigation Parcours Demo")
+print("=" * 50)
+print(f"Total waypoints in parcours: {len(my_drone.waypoints)}")
+print(f"LIDAR sensors: {len(my_drone.lidar_sensors)} rangefinders")
+print("Starting navigation...\n")
 
 with mujoco.viewer.launch_passive(my_drone.m, my_drone.d) as viewer:
-  time.sleep(5)
-  # Close the viewer automatically after 30 wall-seconds.
+  # Close the viewer automatically after 60 wall-seconds (or run indefinitely by removing the time check)
   start = time.time()
   step = 1
 
-  while viewer.is_running() and time.time() - start < 30:
+  while viewer.is_running() and time.time() - start < 60:
     step_start = time.time()
     
-    # flight program
-    if time.time()- start > 2:
-      my_drone.planner.update_target(np.array((1,1,1)))
-
-    if time.time()- start > 10:
-      my_drone.planner.update_target(np.array((-1,1,2)))
-
-    if time.time()- start > 18:
-      my_drone.planner.update_target(np.array((-1,-1,0.5)))
+    # Check and update waypoints based on distance
+    my_drone.check_and_update_waypoint()
 
     # outer control loop
     if step % 20 == 0:
@@ -266,9 +370,51 @@ with mujoco.viewer.launch_passive(my_drone.m, my_drone.d) as viewer:
 
     mujoco.mj_step(my_drone.m, my_drone.d)
 
-    # Example modification of a viewer option: toggle contact points every two seconds.
+    # Get and visualize LIDAR data
+    lidar_data = my_drone.get_lidar_data()
+    
     with viewer.lock():
+      # Toggle contact points
       viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = int(my_drone.d.time % 2)
+      
+      # Visualize LIDAR rays using viewer's scene
+      viewer.user_scn.ngeom = 0  # Clear previous visualization geoms
+      
+      for lidar in lidar_data:
+        if lidar['has_hit']:
+          # Draw line from sensor to hit point (bright green for hit)
+          mujoco.mjv_initGeom(
+            viewer.user_scn.geoms[viewer.user_scn.ngeom],
+            type=mujoco.mjtGeom.mjGEOM_LINE,
+            size=np.zeros(3),
+            pos=np.zeros(3),
+            mat=np.eye(3).flatten(),
+            rgba=np.array([0, 1, 0, 0.6])  # Bright green with transparency
+          )
+          mujoco.mjv_connector(
+            viewer.user_scn.geoms[viewer.user_scn.ngeom],
+            mujoco.mjtGeom.mjGEOM_LINE,
+            2.0,  # thicker line width
+            lidar['site_pos'],
+            lidar['hit_point']
+          )
+          viewer.user_scn.ngeom += 1
+          
+          # Draw larger sphere at hit point for better visibility
+          if viewer.user_scn.ngeom < viewer.user_scn.maxgeom:
+            mujoco.mjv_initGeom(
+              viewer.user_scn.geoms[viewer.user_scn.ngeom],
+              type=mujoco.mjtGeom.mjGEOM_SPHERE,
+              size=np.array([0.03, 0, 0]),
+              pos=lidar['hit_point'],
+              mat=np.eye(3).flatten(),
+              rgba=np.array([1, 0.2, 0, 0.8])  # Orange-red hit point, more opaque
+            )
+            viewer.user_scn.ngeom += 1
+        
+        # Prevent overflow
+        if viewer.user_scn.ngeom >= viewer.user_scn.maxgeom - 1:
+          break
 
     # Pick up changes to the physics state, apply perturbations, update options from GUI.
     viewer.sync()
@@ -278,5 +424,8 @@ with mujoco.viewer.launch_passive(my_drone.m, my_drone.d) as viewer:
     
     # Rudimentary time keeping, will drift relative to wall clock.
     time_until_next_step = my_drone.m.opt.timestep - (time.time() - step_start)
-    if time_until_next_step > 0:
+    if time_until_next_step > 0: 
       time.sleep(time_until_next_step)
+
+print(f"\n🏁 Demo completed! Total waypoints reached: {my_drone.waypoints_completed}")
+print(f"Laps completed: {my_drone.lap_count}")

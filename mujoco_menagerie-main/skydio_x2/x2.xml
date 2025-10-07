@@ -49,6 +49,41 @@
       <site name="thrust2" pos="-.14 .18 .05"/>
       <site name="thrust3" pos=".14 .18 .08"/>
       <site name="thrust4" pos=".14 -.18 .08"/>
+      
+      <!-- LIDAR sensor sites - spherical coverage -->
+      <!-- Horizontal ring (8 directions at 45° intervals) -->
+      <site name="lidar_0" pos="0.08 0 0.04" size="0.01" rgba="1 0 0 1" zaxis="1 0 0"/>    <!-- Forward -->
+      <site name="lidar_45" pos="0.057 0.057 0.04" size="0.01" rgba="1 0 0 1" zaxis="0.707 0.707 0"/>    <!-- Forward-right -->
+      <site name="lidar_90" pos="0 0.08 0.04" size="0.01" rgba="1 0 0 1" zaxis="0 1 0"/>    <!-- Right -->
+      <site name="lidar_135" pos="-0.057 0.057 0.04" size="0.01" rgba="1 0 0 1" zaxis="-0.707 0.707 0"/>  <!-- Back-right -->
+      <site name="lidar_180" pos="-0.08 0 0.04" size="0.01" rgba="1 0 0 1" zaxis="-1 0 0"/>  <!-- Back -->
+      <site name="lidar_225" pos="-0.057 -0.057 0.04" size="0.01" rgba="1 0 0 1" zaxis="-0.707 -0.707 0"/> <!-- Back-left -->
+      <site name="lidar_270" pos="0 -0.08 0.04" size="0.01" rgba="1 0 0 1" zaxis="0 -1 0"/>  <!-- Left -->
+      <site name="lidar_315" pos="0.057 -0.057 0.04" size="0.01" rgba="1 0 0 1" zaxis="0.707 -0.707 0"/>  <!-- Forward-left -->
+      
+      <!-- Upper ring (8 directions, 30° elevation) -->
+      <site name="lidar_up_0" pos="0.069 0 0.07" size="0.01" rgba="1 0.5 0 1" zaxis="0.866 0 0.5"/>
+      <site name="lidar_up_45" pos="0.049 0.049 0.07" size="0.01" rgba="1 0.5 0 1" zaxis="0.612 0.612 0.5"/>
+      <site name="lidar_up_90" pos="0 0.069 0.07" size="0.01" rgba="1 0.5 0 1" zaxis="0 0.866 0.5"/>
+      <site name="lidar_up_135" pos="-0.049 0.049 0.07" size="0.01" rgba="1 0.5 0 1" zaxis="-0.612 0.612 0.5"/>
+      <site name="lidar_up_180" pos="-0.069 0 0.07" size="0.01" rgba="1 0.5 0 1" zaxis="-0.866 0 0.5"/>
+      <site name="lidar_up_225" pos="-0.049 -0.049 0.07" size="0.01" rgba="1 0.5 0 1" zaxis="-0.612 -0.612 0.5"/>
+      <site name="lidar_up_270" pos="0 -0.069 0.07" size="0.01" rgba="1 0.5 0 1" zaxis="0 -0.866 0.5"/>
+      <site name="lidar_up_315" pos="0.049 -0.049 0.07" size="0.01" rgba="1 0.5 0 1" zaxis="0.612 -0.612 0.5"/>
+      
+      <!-- Lower ring (8 directions, -30° elevation) -->
+      <site name="lidar_down_0" pos="0.069 0 0.01" size="0.01" rgba="0 1 1 1" zaxis="0.866 0 -0.5"/>
+      <site name="lidar_down_45" pos="0.049 0.049 0.01" size="0.01" rgba="0 1 1 1" zaxis="0.612 0.612 -0.5"/>
+      <site name="lidar_down_90" pos="0 0.069 0.01" size="0.01" rgba="0 1 1 1" zaxis="0 0.866 -0.5"/>
+      <site name="lidar_down_135" pos="-0.049 0.049 0.01" size="0.01" rgba="0 1 1 1" zaxis="-0.612 0.612 -0.5"/>
+      <site name="lidar_down_180" pos="-0.069 0 0.01" size="0.01" rgba="0 1 1 1" zaxis="-0.866 0 -0.5"/>
+      <site name="lidar_down_225" pos="-0.049 -0.049 0.01" size="0.01" rgba="0 1 1 1" zaxis="-0.612 -0.612 -0.5"/>
+      <site name="lidar_down_270" pos="0 -0.069 0.01" size="0.01" rgba="0 1 1 1" zaxis="0 -0.866 -0.5"/>
+      <site name="lidar_down_315" pos="0.049 -0.049 0.01" size="0.01" rgba="0 1 1 1" zaxis="0.612 -0.612 -0.5"/>
+      
+      <!-- Zenith and nadir -->
+      <site name="lidar_zenith" pos="0 0 0.09" size="0.01" rgba="0 1 0 1" zaxis="0 0 1"/>
+      <site name="lidar_nadir" pos="0 0 -0.01" size="0.01" rgba="0 0 1 1" zaxis="0 0 -1"/>
     </body>
   </worldbody>
 
@@ -63,6 +98,41 @@
     <gyro name="body_gyro" site="imu"/>
     <accelerometer name="body_linacc" site="imu"/>
     <framequat name="body_quat" objtype="site" objname="imu"/>
+    
+    <!-- LIDAR rangefinder sensors - spherical coverage -->
+    <!-- Horizontal ring -->
+    <rangefinder name="lidar_0" site="lidar_0" cutoff="5"/>
+    <rangefinder name="lidar_45" site="lidar_45" cutoff="5"/>
+    <rangefinder name="lidar_90" site="lidar_90" cutoff="5"/>
+    <rangefinder name="lidar_135" site="lidar_135" cutoff="5"/>
+    <rangefinder name="lidar_180" site="lidar_180" cutoff="5"/>
+    <rangefinder name="lidar_225" site="lidar_225" cutoff="5"/>
+    <rangefinder name="lidar_270" site="lidar_270" cutoff="5"/>
+    <rangefinder name="lidar_315" site="lidar_315" cutoff="5"/>
+    
+    <!-- Upper ring -->
+    <rangefinder name="lidar_up_0" site="lidar_up_0" cutoff="5"/>
+    <rangefinder name="lidar_up_45" site="lidar_up_45" cutoff="5"/>
+    <rangefinder name="lidar_up_90" site="lidar_up_90" cutoff="5"/>
+    <rangefinder name="lidar_up_135" site="lidar_up_135" cutoff="5"/>
+    <rangefinder name="lidar_up_180" site="lidar_up_180" cutoff="5"/>
+    <rangefinder name="lidar_up_225" site="lidar_up_225" cutoff="5"/>
+    <rangefinder name="lidar_up_270" site="lidar_up_270" cutoff="5"/>
+    <rangefinder name="lidar_up_315" site="lidar_up_315" cutoff="5"/>
+    
+    <!-- Lower ring -->
+    <rangefinder name="lidar_down_0" site="lidar_down_0" cutoff="5"/>
+    <rangefinder name="lidar_down_45" site="lidar_down_45" cutoff="5"/>
+    <rangefinder name="lidar_down_90" site="lidar_down_90" cutoff="5"/>
+    <rangefinder name="lidar_down_135" site="lidar_down_135" cutoff="5"/>
+    <rangefinder name="lidar_down_180" site="lidar_down_180" cutoff="5"/>
+    <rangefinder name="lidar_down_225" site="lidar_down_225" cutoff="5"/>
+    <rangefinder name="lidar_down_270" site="lidar_down_270" cutoff="5"/>
+    <rangefinder name="lidar_down_315" site="lidar_down_315" cutoff="5"/>
+    
+    <!-- Zenith and nadir -->
+    <rangefinder name="lidar_zenith" site="lidar_zenith" cutoff="5"/>
+    <rangefinder name="lidar_nadir" site="lidar_nadir" cutoff="5"/>
   </sensor>
 
   <keyframe>

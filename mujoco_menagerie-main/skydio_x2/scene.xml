@@ -1,7 +1,7 @@
 <mujoco model="Skydio X2 scene">
   <include file="x2.xml"/>
 
-  <statistic center="0 0 0.1" extent="0.6" meansize=".05"/>
+  <statistic center="0 0 1" extent="4" meansize=".05"/>
 
   <visual>
     <headlight diffuse="0.8 0.8 0.8" ambient="0.3 0.3 0.3" specular="0 0 0"/>
@@ -10,14 +10,103 @@
   </visual>
 
   <asset>
-    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+    <texture type="skybox" builtin="gradient" rgb1="0.4 0.6 0.9" rgb2="0.1 0.2 0.4" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.3 0.4 0.3" rgb2="0.25 0.35 0.25"
       markrgb="0.8 0.8 0.8" width="300" height="300"/>
-    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="10 10" reflectance="0.1"/>
+    
+    <!-- Building materials -->
+    <texture type="2d" name="building_texture" builtin="flat" rgb1="0.6 0.6 0.7" width="100" height="100"/>
+    <material name="building_mat" texture="building_texture" rgba="0.7 0.7 0.8 1" reflectance="0.3"/>
+    <material name="building_red" rgba="0.8 0.3 0.3 1" reflectance="0.2"/>
+    <material name="building_blue" rgba="0.3 0.4 0.8 1" reflectance="0.2"/>
+    <material name="building_green" rgba="0.4 0.6 0.4 1" reflectance="0.2"/>
+    <material name="building_yellow" rgba="0.9 0.8 0.4 1" reflectance="0.2"/>
+    
+    <!-- Terrain textures -->
+    <texture type="2d" name="grass" builtin="flat" rgb1="0.2 0.5 0.2" width="100" height="100"/>
+    <material name="grass_mat" texture="grass" rgba="0.3 0.6 0.3 1"/>
+    
+    <!-- Waypoint marker material -->
+    <material name="waypoint_mat" rgba="1 0 0 0.5"/>
   </asset>
 
   <worldbody>
-    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <!-- Enhanced lighting -->
+    <light pos="0 0 3" dir="0 0 -1" directional="true" diffuse="0.8 0.8 0.8"/>
+    <light pos="2 2 3" dir="-0.5 -0.5 -1" directional="true" diffuse="0.4 0.4 0.5"/>
+    
+    <!-- Ground plane -->
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+    
+    <!-- Terrain features - elevated areas / hills (visual only) -->
+    <geom name="hill1" type="ellipsoid" size="1.5 1.0 0.2" pos="3 -2 0" material="grass_mat" contype="0" conaffinity="0"/>
+    <geom name="hill2" type="ellipsoid" size="1.0 1.5 0.15" pos="-3 2 0" material="grass_mat" contype="0" conaffinity="0"/>
+    
+    <!-- Buildings - various sizes and colors with collisions enabled -->
+    <!-- Tall building cluster 1 -->
+    <body name="building1" pos="2 2 0">
+      <geom type="box" size="0.3 0.3 0.8" pos="0 0 0.8" material="building_mat"/>
+      <geom type="box" size="0.32 0.32 0.05" pos="0 0 1.65" rgba="0.5 0.5 0.5 1"/>
+    </body>
+    
+    <body name="building2" pos="2.8 1.5 0">
+      <geom type="box" size="0.25 0.25 0.5" pos="0 0 0.5" material="building_red"/>
+      <geom type="box" size="0.27 0.27 0.03" pos="0 0 1.03" rgba="0.5 0.3 0.3 1"/>
+    </body>
+    
+    <!-- Building cluster 2 -->
+    <body name="building3" pos="-2 2 0">
+      <geom type="box" size="0.4 0.3 0.6" pos="0 0 0.6" material="building_blue"/>
+      <geom type="box" size="0.42 0.32 0.04" pos="0 0 1.24" rgba="0.2 0.3 0.5 1"/>
+    </body>
+    
+    <body name="building4" pos="-2.5 1.3 0">
+      <geom type="box" size="0.2 0.3 0.4" pos="0 0 0.4" material="building_green"/>
+    </body>
+    
+    <!-- Building cluster 3 -->
+    <body name="building5" pos="-1 -1.5 0">
+      <geom type="box" size="0.35 0.4 0.7" pos="0 0 0.7" material="building_yellow"/>
+      <geom type="box" size="0.37 0.42 0.04" pos="0 0 1.44" rgba="0.6 0.5 0.2 1"/>
+    </body>
+    
+    <body name="building6" pos="-0.3 -2 0">
+      <geom type="box" size="0.25 0.25 0.5" pos="0 0 0.5" material="building_mat"/>
+    </body>
+    
+    <!-- Building cluster 4 -->
+    <body name="building7" pos="1.5 -1.8 0">
+      <geom type="box" size="0.3 0.35 0.55" pos="0 0 0.55" material="building_red"/>
+    </body>
+    
+    <!-- Small structures / obstacles -->
+    <body name="structure1" pos="0.5 0.5 0">
+      <geom type="cylinder" size="0.15 0.3" pos="0 0 0.3" rgba="0.6 0.5 0.4 1"/>
+    </body>
+    
+    <body name="structure2" pos="-0.8 -0.5 0">
+      <geom type="cylinder" size="0.12 0.25" pos="0 0 0.25" rgba="0.5 0.5 0.6 1"/>
+    </body>
+    
+    <!-- Waypoint markers - Urban parcours navigation path -->
+    <geom name="waypoint0_marker" type="sphere" size="0.08" pos="0 0 1" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint1_marker" type="sphere" size="0.08" pos="1 0.8 1.2" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint2_marker" type="sphere" size="0.08" pos="1.5 2.5 1.5" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint3_marker" type="sphere" size="0.08" pos="0 3 1.3" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint4_marker" type="sphere" size="0.08" pos="-1.5 2.5 1.8" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint5_marker" type="sphere" size="0.08" pos="-3 1 1.2" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint6_marker" type="sphere" size="0.08" pos="-2.5 -0.5 0.8" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint7_marker" type="sphere" size="0.08" pos="-1.5 -1.2 1.5" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint8_marker" type="sphere" size="0.08" pos="0.5 -2.5 1.0" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint9_marker" type="sphere" size="0.08" pos="2.2 -1.2 1.3" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint10_marker" type="sphere" size="0.08" pos="3.2 0 1.6" material="waypoint_mat" contype="0" conaffinity="0"/>
+    <geom name="waypoint11_marker" type="sphere" size="0.08" pos="2.5 0.8 1.0" material="waypoint_mat" contype="0" conaffinity="0"/>
+    
+    <!-- Perimeter walls/boundaries (optional) -->
+    <geom name="wall_north" type="box" size="4 0.1 0.3" pos="0 4 0.3" rgba="0.5 0.5 0.5 0.6" contype="0" conaffinity="0"/>
+    <geom name="wall_south" type="box" size="4 0.1 0.3" pos="0 -4 0.3" rgba="0.5 0.5 0.5 0.6" contype="0" conaffinity="0"/>
+    <geom name="wall_east" type="box" size="0.1 4 0.3" pos="4 0 0.3" rgba="0.5 0.5 0.5 0.6" contype="0" conaffinity="0"/>
+    <geom name="wall_west" type="box" size="0.1 4 0.3" pos="-4 0 0.3" rgba="0.5 0.5 0.5 0.6" contype="0" conaffinity="0"/>
   </worldbody>
 </mujoco>

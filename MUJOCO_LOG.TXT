@@ -1,0 +1,21 @@
+Tue Oct  7 18:38:36 2025
+ERROR: could not create window
+
+Tue Oct  7 18:44:29 2025
+ERROR: could not create window
+
+Tue Oct  7 18:45:22 2025
+ERROR: could not create window
+
+Tue Oct  7 18:47:46 2025
+ERROR: could not create window
+
+Tue Oct  7 18:50:44 2025
+ERROR: could not create window
+
+Tue Oct  7 18:53:54 2025
+ERROR: could not create window
+
+Tue Oct  7 19:37:27 2025
+WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 35.8900.
+
