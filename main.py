@@ -179,21 +179,30 @@ class drone:
     self.m = mujoco.MjModel.from_xml_path('mujoco_menagerie-main/skydio_x2/scene.xml')
     self.d = mujoco.MjData(self.m)
 
-    # Urban parcours waypoint system
+    # Urban parcours waypoint system with improved obstacle clearance
     if waypoints is None:
       self.waypoints = [
-        np.array([0, 0, 1]),         # Start
-        np.array([1, 0.8, 1.2]),     # Navigate through center
-        np.array([1.5, 2.5, 1.5]),   # Around building cluster 1
-        np.array([0, 3, 1.3]),       # North edge
-        np.array([-1.5, 2.5, 1.8]),  # Around building cluster 2
-        np.array([-3, 1, 1.2]),      # West side
-        np.array([-2.5, -0.5, 0.8]), # Navigate low
-        np.array([-1.5, -1.2, 1.5]), # Around building cluster 3
-        np.array([0.5, -2.5, 1.0]),  # South edge
-        np.array([2.2, -1.2, 1.3]),  # Around building cluster 4
-        np.array([3.2, 0, 1.6]),     # East side
-        np.array([2.5, 0.8, 1.0]),   # Return path
+        np.array([0, 0, 1]),           # Start
+        np.array([0.5, 0.2, 1.2]),     # Safe path avoiding structure1
+        np.array([1.2, 1.0, 1.3]),     # Intermediate - clear of obstacles
+        np.array([0.8, 2.0, 1.5]),     # Approaching north, avoiding building1
+        np.array([0.3, 3.0, 1.4]),     # North edge
+        np.array([-0.8, 3.2, 1.6]),    # North-west transition
+        np.array([-1.8, 2.8, 1.9]),    # Around building cluster 2 (higher)
+        np.array([-2.8, 1.8, 1.5]),    # West side approach
+        np.array([-3.2, 0.8, 1.3]),    # West side
+        np.array([-3.0, 0.0, 1.1]),    # West-south transition
+        np.array([-2.2, -0.8, 1.2]),   # Avoiding structure2
+        np.array([-2.3, -1.8, 1.7]),   # Around building cluster 3 (higher, safer distance)
+        np.array([-0.8, -3.2, 1.3]),   # South approach
+        np.array([0.6, -3.0, 1.2]),    # South edge (moved for clearance)
+        np.array([1.1, -2.7, 1.5]),    # South-east transition (smoothed)
+        np.array([1.8, -1.5, 1.4]),    # Around building cluster 4
+        np.array([2.8, -0.8, 1.5]),    # East approach
+        np.array([3.4, 0.2, 1.7]),     # East side
+        np.array([3.0, 1.0, 1.5]),     # East-north turn
+        np.array([2.0, 1.2, 1.3]),     # Return path (safer from building1)
+        np.array([1.0, 0.5, 1.1]),     # Final approach
       ]
     else:
       self.waypoints = waypoints
@@ -351,12 +360,15 @@ print(f"Total waypoints in parcours: {len(my_drone.waypoints)}")
 print(f"LIDAR sensors: {len(my_drone.lidar_sensors)} rangefinders")
 print("Starting navigation...\n")
 
+# Configuration: run until a full lap is completed, or fall back to time cap if disabled
+RUN_UNTIL_FULL_LAP = True
+
 with mujoco.viewer.launch_passive(my_drone.m, my_drone.d) as viewer:
-  # Close the viewer automatically after 60 wall-seconds (or run indefinitely by removing the time check)
+  # Close the viewer after a full lap if RUN_UNTIL_FULL_LAP is True; otherwise after 60s
   start = time.time()
   step = 1
 
-  while viewer.is_running() and time.time() - start < 60:
+  while viewer.is_running() and ((RUN_UNTIL_FULL_LAP and my_drone.lap_count < 1) or (not RUN_UNTIL_FULL_LAP and time.time() - start < 60)):
     step_start = time.time()
     
     # Check and update waypoints based on distance
