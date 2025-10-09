@@ -1,24 +1,26 @@
 # manual_control.py
 # Keyboard + Gamepad teleoperation for DroneEnv via Gymnasium API.
 #
-# Behavior: when you are not pressing keys/moving sticks, the action sent this frame is zeros.
-# Inside the env, setpoints decay toward neutral → it hovers hands-off.
+# ANGLE MODE (Stabilized Mode):
+# - Stick positions directly map to target angles
+# - Center stick = level flight (0° roll/pitch)
+# - Releasing controls = returns to level automatically
+# - This matches how real drones behave in angle/stabilized mode
 #
 # Keyboard Controls:
-#   Arrow keys: roll/pitch setpoint nudges (hold to accumulate via OS key repeat)
-#   A/D: yaw rate (left/right)
-#   Space: altitude rate (up)
-#   Ctrl: altitude rate (down)
-#   Z: zero all commands immediately
-#   R: reset episode
-#   Esc: exit
+#   Arrow keys: Roll/Pitch angle (hold to tilt, release to auto-level)
+#   A/D: Yaw rate (left/right rotation)
+#   W/S: Altitude up/down
+#   Z: Force level (zero angles immediately)
+#   R: Reset episode
+#   Esc: Exit
 #
-# Gamepad Controls:
-#   Left stick up/down: altitude rate
-#   Left stick left/right: yaw rate
-#   Right stick up/down: pitch
-#   Right stick left/right: roll
-#   Start/Options button: reset episode
+# Gamepad Controls (Angle Mode - like a real RC transmitter):
+#   Left stick up/down: Altitude target
+#   Left stick left/right: Yaw rate
+#   Right stick up/down: Pitch angle
+#   Right stick left/right: Roll angle
+#   Start/Options button: Reset episode
 #
 # Requirements:
 #   pip install pygame
@@ -38,17 +40,22 @@ except ImportError:
 
 from simulation import DroneEnv
 
-# Per-press increments / rates (tune to taste)
-ROLL_PITCH_DELTA = np.deg2rad(1.2)   # delta added this frame when arrow pressed
-YAW_RATE_CMD     = np.deg2rad(30.0)  # one-frame yaw rate when A/D pressed
-ALT_RATE_CMD     = 0.7               # one-frame altitude rate when W/S pressed
+# ========== ANGLE MODE SETTINGS ==========
+# These match typical RC transmitter behavior
 
-# Gamepad settings
-GAMEPAD_DEADZONE = 0.15              # Ignore small stick movements
-GAMEPAD_ROLL_PITCH_SCALE = 1  # Max roll/pitch per frame from stick
-GAMEPAD_YAW_SCALE = 1       # Max yaw rate from stick
-GAMEPAD_ALT_SCALE = 1.0                      # Max altitude rate from stick
-CALIBRATION_TIME = 3.0               # Seconds to calibrate gamepad center position
+# Keyboard "virtual stick" settings
+KEYBOARD_ANGLE_PER_PRESS = np.deg2rad(15.0)  # Angle when key held (builds up to max)
+MAX_KEYBOARD_ANGLE = np.deg2rad(30.0)        # Max angle from keyboard
+KEYBOARD_YAW_RATE = np.deg2rad(60.0)         # Yaw rate when A/D pressed
+KEYBOARD_ALT_STEP = 0.3                      # Altitude change per keypress
+STICK_RETURN_SPEED = 5.0                     # How fast virtual stick returns to center (rad/s)
+
+# Gamepad settings (direct stick-to-angle mapping)
+GAMEPAD_DEADZONE = 0.15                      # Ignore small stick movements
+GAMEPAD_MAX_ANGLE = np.deg2rad(30.0)         # Max tilt angle at full stick deflection
+GAMEPAD_MAX_YAW_RATE = np.deg2rad(90.0)      # Max yaw rate at full stick deflection
+GAMEPAD_ALT_RATE = 1.5                       # Altitude change rate from stick
+CALIBRATION_TIME = 3.0                       # Seconds to calibrate gamepad center position
 
 # Queue to collect keypress events between frames
 _key_events = deque()
@@ -145,7 +152,10 @@ def calibrate_gamepad(joystick, duration=CALIBRATION_TIME):
     return centers
 
 def read_gamepad(joystick, centers=None):
-    """Read gamepad inputs and return (roll_step, pitch_step, yaw_rate, alt_rate, reset_pressed)."""
+    """
+    Read gamepad inputs and return (roll_angle, pitch_angle, yaw_rate, alt_rate, reset_pressed).
+    ANGLE MODE: Stick positions directly map to target angles.
+    """
     if joystick is None:
         return 0.0, 0.0, 0.0, 0.0, False
     
@@ -162,8 +172,8 @@ def read_gamepad(joystick, centers=None):
     
     num_axes = joystick.get_numaxes()
     
-    roll_step = 0.0
-    pitch_step = 0.0
+    roll_angle = 0.0
+    pitch_angle = 0.0
     yaw_rate = 0.0
     alt_rate = 0.0
     
@@ -171,25 +181,25 @@ def read_gamepad(joystick, centers=None):
     if centers is None:
         centers = np.zeros(num_axes)
     
-    # Left stick X (axis 0) -> yaw (left=-1, right=+1)
+    # Left stick X (axis 0) -> yaw rate
     if num_axes > 0:
         left_x = apply_deadzone(joystick.get_axis(0), centers[0])
-        yaw_rate = -left_x * GAMEPAD_YAW_SCALE  # Negate so left stick right = yaw right
+        yaw_rate = -left_x * GAMEPAD_MAX_YAW_RATE  # Full stick = max yaw rate
     
-    # Left stick Y (axis 1) -> altitude (up=-1, down=+1)
+    # Left stick Y (axis 1) -> altitude rate
     if num_axes > 1:
         left_y = apply_deadzone(joystick.get_axis(1), centers[1])
-        alt_rate = -left_y * GAMEPAD_ALT_SCALE  # Negate so stick up = altitude up
+        alt_rate = -left_y * GAMEPAD_ALT_RATE  # Full stick = max altitude rate
     
-    # Right stick X (axis 3) -> roll (left=-1, right=+1)
+    # Right stick X (axis 3) -> roll angle (ANGLE MODE)
     if num_axes > 3:
         right_x = apply_deadzone(joystick.get_axis(3), centers[3])
-        roll_step = -right_x * GAMEPAD_ROLL_PITCH_SCALE  # Negate so stick right = roll right
+        roll_angle = -right_x * GAMEPAD_MAX_ANGLE  # Full stick = max angle
     
-    # Right stick Y (axis 4) -> pitch (up=-1, down=+1)
+    # Right stick Y (axis 4) -> pitch angle (ANGLE MODE)
     if num_axes > 4:
         right_y = apply_deadzone(joystick.get_axis(4), centers[4])
-        pitch_step = -right_y * GAMEPAD_ROLL_PITCH_SCALE  # Negate so stick up = pitch forward
+        pitch_angle = -right_y * GAMEPAD_MAX_ANGLE  # Full stick = max angle
     
     # Check for reset button (Options button on DualSense is usually button 9)
     reset_pressed = False
@@ -199,7 +209,7 @@ def read_gamepad(joystick, centers=None):
     elif num_buttons > 7:
         reset_pressed = joystick.get_button(7)
     
-    return roll_step, pitch_step, yaw_rate, alt_rate, reset_pressed
+    return roll_angle, pitch_angle, yaw_rate, alt_rate, reset_pressed
 
 def main():
     # Initialize gamepad FIRST, before creating env or viewer
@@ -218,45 +228,65 @@ def main():
     # Launch viewer with our key handler (no need to access raw GLFW window)
     env.viewer = mujoco.viewer.launch_passive(env.m, env.d, key_callback=_key_callback)
 
-    print("\n" + "="*60)
-    print("DRONE MANUAL CONTROL")
-    print("="*60)
+    print("\n" + "="*70)
+    print("DRONE MANUAL CONTROL - ANGLE MODE (Stabilized)")
+    print("="*70)
+    print("✈️  This simulates a real drone flight controller in ANGLE MODE:")
+    print("   - Sticks control target ANGLES (not rates)")
+    print("   - Release sticks = auto-level to 0°")
+    print("   - Just like flying a real DJI/Skydio drone in stabilized mode!")
+    print("-"*70)
     if joystick:
-        print("Gamepad Controls:")
-        print("  Left stick:  Yaw (L/R) | Altitude (U/D)")
-        print("  Right stick: Roll (L/R) | Pitch (U/D)")
+        print("🎮 Gamepad Controls (RC Transmitter Style):")
+        print("  Left stick:  Yaw rate (L/R) | Altitude (U/D)")
+        print("  Right stick: Roll angle (L/R) | Pitch angle (U/D)")
         print("  Start button: Reset")
         print()
-    print("Keyboard Controls:")
-    print("  Arrows: Roll/Pitch | A/D: Yaw | Space/Ctrl: Alt Up/Down")
-    print("  Z: Stop | R: Reset | Esc: Quit")
-    print("="*60 + "\n")
+    print("⌨️  Keyboard Controls:")
+    print("  Arrow keys: Roll/Pitch angles (hold to tilt, release to level)")
+    print("  A/D: Yaw rate | W/S: Altitude Up/Down")
+    print("  Z: Force level | R: Reset | Esc: Quit")
+    print("="*70 + "\n")
 
     dt = 1.0 / env.metadata.get("render_fps", 60)
     running = True
     gamepad_reset_pressed_last = False
+    
+    # ANGLE MODE: Virtual stick state for keyboard (simulates holding stick at a position)
+    keyboard_roll_angle = 0.0    # Current "virtual stick" roll position
+    keyboard_pitch_angle = 0.0   # Current "virtual stick" pitch position
+    target_altitude = env.init_hover_alt  # Track altitude setpoint
+    
+    # Track which keys are currently held
+    keys_held = set()
 
     while running and env.viewer.is_running():
-        # Start each frame at neutral → hover if no input this frame
-        roll_step = 0.0
-        pitch_step = 0.0
-        yaw_rate = 0.0
-        alt_rate = 0.0
+        # Start with neutral commands
+        roll_angle_cmd = 0.0
+        pitch_angle_cmd = 0.0
+        yaw_rate_cmd = 0.0
         
-        # Read gamepad first (can be overridden by keyboard)
-        gp_roll, gp_pitch, gp_yaw, gp_alt, gamepad_reset_pressed = read_gamepad(joystick, gamepad_centers)
-        roll_step += gp_roll
-        pitch_step += gp_pitch
-        yaw_rate += gp_yaw
-        alt_rate += gp_alt
+        # Read gamepad (direct stick-to-angle mapping in angle mode)
+        gp_roll, gp_pitch, gp_yaw, gp_alt_rate, gamepad_reset_pressed = read_gamepad(joystick, gamepad_centers)
+        
+        if joystick is not None:
+            # Gamepad has priority - directly set angles from stick positions
+            roll_angle_cmd = gp_roll
+            pitch_angle_cmd = gp_pitch
+            yaw_rate_cmd = gp_yaw
+            target_altitude += gp_alt_rate * dt  # Integrate altitude rate
+            target_altitude = max(0.1, min(10.0, target_altitude))  # Clamp altitude
         
         # Handle gamepad reset (edge detection to avoid multiple resets)
         if gamepad_reset_pressed and not gamepad_reset_pressed_last:
             obs, _ = env.reset()
-            print("Reset by gamepad")
+            target_altitude = env.init_hover_alt
+            keyboard_roll_angle = 0.0
+            keyboard_pitch_angle = 0.0
+            print("🔄 Reset by gamepad")
         gamepad_reset_pressed_last = gamepad_reset_pressed
 
-        # Drain key events that arrived since last frame
+        # Process keyboard events
         while _key_events:
             keycode = _key_events.popleft()
 
@@ -266,57 +296,93 @@ def main():
             GLFW_KEY_UP    = 265
             GLFW_KEY_DOWN  = 264
             GLFW_KEY_ESC   = 256
-            GLFW_KEY_SPACE = 32
-            GLFW_KEY_LEFT_CONTROL = 341
-            GLFW_KEY_RIGHT_CONTROL = 345
             try:
                 ch = chr(keycode)
             except Exception:
                 ch = ''
 
+            # Track key presses for keyboard "stick" simulation
             if keycode == GLFW_KEY_LEFT:
-                roll_step += +ROLL_PITCH_DELTA
+                keys_held.add('left')
             elif keycode == GLFW_KEY_RIGHT:
-                roll_step += -ROLL_PITCH_DELTA
+                keys_held.add('right')
             elif keycode == GLFW_KEY_UP:
-                pitch_step += -ROLL_PITCH_DELTA
+                keys_held.add('up')
             elif keycode == GLFW_KEY_DOWN:
-                pitch_step += +ROLL_PITCH_DELTA
+                keys_held.add('down')
             elif keycode == GLFW_KEY_ESC:
                 running = False
-
+            elif ch in ('w','W'):
+                keys_held.add('w')
+            elif ch in ('s','S'):
+                keys_held.add('s')
             elif ch in ('a','A'):
-                yaw_rate += +YAW_RATE_CMD
+                keys_held.add('a')
             elif ch in ('d','D'):
-                yaw_rate += -YAW_RATE_CMD
-            elif keycode == GLFW_KEY_SPACE:
-                alt_rate += +ALT_RATE_CMD
-            elif keycode in (GLFW_KEY_LEFT_CONTROL, GLFW_KEY_RIGHT_CONTROL):
-                alt_rate += -ALT_RATE_CMD
+                keys_held.add('d')
             elif ch in ('z','Z'):
-                # explicit neutralize
-                roll_step = pitch_step = yaw_rate = alt_rate = 0.0
+                # Force level immediately
+                keyboard_roll_angle = 0.0
+                keyboard_pitch_angle = 0.0
+                keys_held.clear()
+                print("⚖️  Forced level")
             elif ch in ('r','R'):
                 obs, _ = env.reset()
-                print("Reset by keyboard")
+                target_altitude = env.init_hover_alt
+                keyboard_roll_angle = 0.0
+                keyboard_pitch_angle = 0.0
+                keys_held.clear()
+                print("🔄 Reset by keyboard")
 
+        # Keyboard: simulate holding a virtual stick at an angle
+        # Keys move the virtual stick, which then commands that angle
+        if joystick is None:  # Only use keyboard if no gamepad
+            # Update keyboard virtual stick position based on held keys
+            if 'left' in keys_held:
+                keyboard_roll_angle = min(keyboard_roll_angle + KEYBOARD_ANGLE_PER_PRESS * dt, MAX_KEYBOARD_ANGLE)
+            if 'right' in keys_held:
+                keyboard_roll_angle = max(keyboard_roll_angle - KEYBOARD_ANGLE_PER_PRESS * dt, -MAX_KEYBOARD_ANGLE)
+            if 'up' in keys_held:
+                keyboard_pitch_angle = max(keyboard_pitch_angle - KEYBOARD_ANGLE_PER_PRESS * dt, -MAX_KEYBOARD_ANGLE)
+            if 'down' in keys_held:
+                keyboard_pitch_angle = min(keyboard_pitch_angle + KEYBOARD_ANGLE_PER_PRESS * dt, MAX_KEYBOARD_ANGLE)
+            
+            # Return to center when keys released (auto-level in angle mode!)
+            if 'left' not in keys_held and 'right' not in keys_held:
+                keyboard_roll_angle *= max(0, 1 - STICK_RETURN_SPEED * dt)
+            if 'up' not in keys_held and 'down' not in keys_held:
+                keyboard_pitch_angle *= max(0, 1 - STICK_RETURN_SPEED * dt)
+            
+            # Apply keyboard virtual stick to commands
+            roll_angle_cmd = keyboard_roll_angle
+            pitch_angle_cmd = keyboard_pitch_angle
+            
+            # Yaw rate from keyboard
+            if 'a' in keys_held:
+                yaw_rate_cmd = +KEYBOARD_YAW_RATE
+            if 'd' in keys_held:
+                yaw_rate_cmd = -KEYBOARD_YAW_RATE
+            
+            # Altitude from keyboard
+            if 'w' in keys_held:
+                target_altitude += KEYBOARD_ALT_STEP * dt
+            if 's' in keys_held:
+                target_altitude -= KEYBOARD_ALT_STEP * dt
+            target_altitude = max(0.1, min(10.0, target_altitude))
 
-        # Debug output - show ALL axes to identify correct mapping
+        # Display current state
         if joystick is not None:
             num_axes = joystick.get_numaxes()
-            axes_str = " ".join([f"[{i}]:{joystick.get_axis(i):+.2f}" for i in range(num_axes)])
-            print(f"Axes: {axes_str} -> roll:{roll_step:+.3f} pitch:{pitch_step:+.3f} yaw:{yaw_rate:+.3f} alt:{alt_rate:+.3f}")
+            axes_str = " ".join([f"[{i}]:{joystick.get_axis(i):+.2f}" for i in range(min(6, num_axes))])
+            print(f"🎮 Raw: {axes_str} | 📐 Cmds: roll={np.rad2deg(roll_angle_cmd):+5.1f}° pitch={np.rad2deg(pitch_angle_cmd):+5.1f}° yaw_rate={np.rad2deg(yaw_rate_cmd):+5.1f}°/s alt={target_altitude:.2f}m")
         else:
-            print(f"Keyboard: roll:{roll_step:.3f} pitch:{pitch_step:.3f} yaw:{yaw_rate:.3f} alt:{alt_rate:.3f}")
+            print(f"⌨️  Keys: {keys_held} | 📐 Angles: roll={np.rad2deg(roll_angle_cmd):+5.1f}° pitch={np.rad2deg(pitch_angle_cmd):+5.1f}° | Alt: {target_altitude:.2f}m")
 
-        # One-frame action (zeros if no input this frame)
-        action = np.array([roll_step, pitch_step, yaw_rate, alt_rate], dtype=np.float32)
+        # Build action for ANGLE MODE: [roll_angle, pitch_angle, yaw_rate, altitude]
+        action = np.array([roll_angle_cmd, pitch_angle_cmd, yaw_rate_cmd, target_altitude], dtype=np.float32)
         obs, reward, terminated, truncated, info = env.step(action)
 
-        # Don't auto-reset during manual control - let user press R to reset manually
-        # if terminated or truncated:
-        #     obs, _ = env.reset()
-
+        # Don't auto-reset during manual control
         time.sleep(dt)
 
     env.close()
@@ -325,7 +391,7 @@ def main():
     if PYGAME_AVAILABLE and joystick is not None:
         pygame.quit()
     
-    print("\nTeleop finished.")
+    print("\n✅ Teleop finished.")
 
 if __name__ == "__main__":
     main()

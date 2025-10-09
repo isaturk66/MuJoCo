@@ -32,10 +32,19 @@ def clamp(v, lo, hi):
 class DroneEnv(gym.Env):
     """
     A MuJoCo drone environment exposing a Gymnasium API (Application Programming Interface).
-    Actions adjust inner-loop setpoints:
-        action = [d_roll_sp, d_pitch_sp, yaw_rate_cmd, alt_rate_cmd]
+    
+    ANGLE MODE (Stabilized Mode):
+    Actions directly command target angles and rates:
+        action = [roll_angle_cmd, pitch_angle_cmd, yaw_rate_cmd, alt_cmd]
+    
+    - roll_angle_cmd, pitch_angle_cmd: Target angles in radians (like RC stick position)
+        * Center stick (0.0) = level flight (0°)
+        * Full deflection = ±max_angle (default ±30°)
+    - yaw_rate_cmd: Yaw rotation rate in rad/s
+    - alt_cmd: Target altitude in meters
+    
     The inner PIDs (proportional–integral–derivative controllers) translate
-    these setpoints/commands to motor thrusts each step.
+    these commands to motor thrusts each step.
 
     Observations (12D):
         [x, y, z, roll, pitch, yaw, vx, vy, vz, wx, wy, wz]
@@ -87,32 +96,32 @@ class DroneEnv(gym.Env):
                 mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_SITE, name)
             )
 
-        # ---- Inner-loop controllers ----
-        # (Gains from your working experiment; tune as needed.)
-        self.pid_alt = PID(5.50844, 0.57871, 1.2, setpoint=0.0)  # outputs thrust term
+        # ---- Inner-loop controllers (ANGLE MODE) ----
+        # Altitude PID: controls altitude position
+        self.pid_alt = PID(5.50844, 0.57871, 1.2, setpoint=self.init_hover_alt)
+        
+        # Attitude PIDs: control roll and pitch angles directly
+        # NOTE: Due to model's axis configuration, these have cross-mapped inputs
         self.pid_roll = PID(2.6785, 0.56871, 1.2508, setpoint=0.0, output_limits=(-1, 1))
         self.pid_pitch = PID(2.6785, 0.56871, 1.2508, setpoint=0.0, output_limits=(-1, 1))
+        
+        # Yaw stabilizer: keeps a fixed setpoint, yaw rate added as feedforward
         self.pid_yaw = PID(0.54, 0.0, 5.358333, setpoint=1.0, output_limits=(-3, 3))
-
-        # ---- Setpoints commanded by actions (internal state, not part of obs) ----
-        self.roll_sp = 0.0
-        self.pitch_sp = 0.0
-        self.yaw_rate_cmd = 0.0
-        self.alt_rate_cmd = 0.0
+        
         self._base_hover_bias = 3.2495  # hover offset added to thrust PID
 
-        # Neutral-decay toward hover when idle (Hz, exponential)
-        self._sp_decay_hz = 3.0
+        # ANGLE MODE: No decay needed - commands are direct from pilot input
 
-        # ---- Action/Observation spaces ----
-        # Action is small per-step delta for roll/pitch setpoint, plus direct rates for yaw/alt
-        self._max_roll_step = np.deg2rad(2.0)
-        self._max_pitch_step = np.deg2rad(2.0)
-        self._max_yaw_rate = np.deg2rad(40.0)
-        self._max_alt_rate = 1.0  # m/s
+        # ---- Action/Observation spaces (ANGLE MODE) ----
+        # Actions: [roll_angle, pitch_angle, yaw_rate, altitude]
+        self._max_angle = np.deg2rad(30.0)  # Max tilt angle (typical for angle mode)
+        self._max_yaw_rate = np.deg2rad(90.0)  # Max yaw rate
+        self._max_altitude = 10.0  # Max altitude setpoint
+        self._min_altitude = 0.1   # Min altitude setpoint (safety)
+        
         self.action_space = spaces.Box(
-            low=np.array([-self._max_roll_step, -self._max_pitch_step, -self._max_yaw_rate, -self._max_alt_rate], dtype=np.float32),
-            high=np.array([ self._max_roll_step,  self._max_pitch_step,  self._max_yaw_rate,  self._max_alt_rate], dtype=np.float32),
+            low=np.array([-self._max_angle, -self._max_angle, -self._max_yaw_rate, self._min_altitude], dtype=np.float32),
+            high=np.array([self._max_angle, self._max_angle, self._max_yaw_rate, self._max_altitude], dtype=np.float32),
             dtype=np.float32
         )
 
@@ -157,29 +166,38 @@ class DroneEnv(gym.Env):
             thrust + roll - pitch + yaw
         ], dtype=np.float32)
 
-    def _update_inner_control(self, dt: float):
+    def _update_inner_control(self, dt: float, roll_cmd: float, pitch_cmd: float, 
+                              yaw_rate_cmd: float, alt_cmd: float):
+        """
+        ANGLE MODE inner-loop control.
+        Commands are treated as setpoints that PIDs track.
+        
+        Args:
+            roll_cmd: Target roll angle (rad)
+            pitch_cmd: Target pitch angle (rad)
+            yaw_rate_cmd: Target yaw rate (rad/s)
+            alt_cmd: Target altitude (m)
+        """
         # Read current state
         pos = self._get_pos()
         roll, pitch, yaw = self._get_angles_from_state()
         alt = pos[2]
 
-        # Update altitude setpoint via alt_rate_cmd
-        self.pid_alt.setpoint += self.alt_rate_cmd * dt  # integrates altitude rate into altitude setpoint
+        # ANGLE MODE: Update setpoints (direct assignment, no accumulation/decay)
+        self.pid_alt.setpoint = alt_cmd
+        self.pid_roll.setpoint = roll_cmd  # But feeds yaw angle due to cross-mapping
+        self.pid_pitch.setpoint = pitch_cmd
+        # pid_yaw keeps fixed setpoint of 1.0, yaw_rate_cmd added as feedforward
 
-        # Apply current setpoints to attitude PIDs
-        self.pid_roll.setpoint = self.roll_sp
-        self.pid_pitch.setpoint = self.pitch_sp
-        # yaw PID used as stabilizer around setpoint=1; we add yaw_rate_cmd directly
-
-        # PID outputs
-        # NOTE: The PID names are misleading - this matches the working example.py behavior:
-        # "pid_roll" actually controls based on YAW, "pid_yaw" controls based on ROLL
+        # PID outputs for ANGLE MODE
+        # NOTE: Cross-mapping required for this specific Skydio X2 model configuration
+        # The model's axes are non-standard: roll control uses yaw, yaw control uses roll
         cmd_thrust = self.pid_alt(alt) + self._base_hover_bias
-        cmd_roll = - self.pid_roll(yaw)   # Use yaw for roll command (matches example.py)
-        cmd_pitch = self.pid_pitch(pitch)
-        cmd_yaw = - self.pid_yaw(roll) + self.yaw_rate_cmd  # Use roll for yaw command (matches example.py)
+        cmd_roll = -self.pid_roll(yaw)  # "roll" PID tracks roll_cmd but reads yaw angle
+        cmd_pitch = self.pid_pitch(pitch)  # pitch is normal
+        cmd_yaw = -self.pid_yaw(roll) + yaw_rate_cmd  # "yaw" PID stabilizes, yaw_rate is feedforward
 
-        # Send to actuators
+        # Send to actuators via motor mixer
         self.d.ctrl[:4] = self._compute_motor_control(cmd_thrust, cmd_roll, cmd_pitch, cmd_yaw)
 
     def _get_lidar_visuals(self):
@@ -248,12 +266,11 @@ class DroneEnv(gym.Env):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.m, self.d)
 
-        # Initialize pose roughly at origin; set hover altitude setpoint
+        # Initialize PIDs to hover state (angle mode default: level and at init altitude)
         self.pid_alt.setpoint = self.init_hover_alt
-        self.roll_sp = 0.0
-        self.pitch_sp = 0.0
-        self.yaw_rate_cmd = 0.0
-        self.alt_rate_cmd = 0.0
+        self.pid_roll.setpoint = 0.0  # Level roll
+        self.pid_pitch.setpoint = 0.0  # Level pitch
+        # pid_yaw keeps its fixed setpoint of 1.0
         self._elapsed_steps = 0
 
         # Step once to settle
@@ -278,28 +295,20 @@ class DroneEnv(gym.Env):
         self._elapsed_steps += 1
         dt = self.m.opt.timestep
 
-        # ----- interpret action (deltas + rates)
-        d_roll_sp, d_pitch_sp, yaw_rate_cmd, alt_rate_cmd = np.asarray(action, dtype=np.float32)
+        # ----- ANGLE MODE: interpret action as direct commands -----
+        # action = [roll_angle_cmd, pitch_angle_cmd, yaw_rate_cmd, alt_cmd]
+        roll_cmd, pitch_cmd, yaw_rate_cmd, alt_cmd = np.asarray(action, dtype=np.float32)
+        
+        # Clamp to safe limits (enforced by action space, but double-check)
+        roll_cmd = clamp(float(roll_cmd), -self._max_angle, self._max_angle)
+        pitch_cmd = clamp(float(pitch_cmd), -self._max_angle, self._max_angle)
+        yaw_rate_cmd = clamp(float(yaw_rate_cmd), -self._max_yaw_rate, self._max_yaw_rate)
+        alt_cmd = clamp(float(alt_cmd), self._min_altitude, self._max_altitude)
 
-        # integrate roll/pitch setpoints by small deltas per step
-        self.roll_sp = clamp(self.roll_sp + float(d_roll_sp), -np.deg2rad(30), np.deg2rad(30))
-        self.pitch_sp = clamp(self.pitch_sp + float(d_pitch_sp), -np.deg2rad(30), np.deg2rad(30))
+        # Inner control loop: PIDs track commanded angles/rates → motor thrusts
+        self._update_inner_control(dt, roll_cmd, pitch_cmd, yaw_rate_cmd, alt_cmd)
 
-        # set rate commands directly for this step
-        self.yaw_rate_cmd = float(yaw_rate_cmd)
-        self.alt_rate_cmd = float(alt_rate_cmd)
-
-        # ----- neutral decay so it hovers when there’s no input
-        decay = math.exp(-self._sp_decay_hz * dt)
-        self.roll_sp *= decay
-        self.pitch_sp *= decay
-        self.yaw_rate_cmd *= decay
-        self.alt_rate_cmd *= decay
-
-        # inner control → motors
-        self._update_inner_control(dt)
-
-        # physics step
+        # Physics step
         mujoco.mj_step(self.m, self.d)
 
         # render & LiDAR draw
